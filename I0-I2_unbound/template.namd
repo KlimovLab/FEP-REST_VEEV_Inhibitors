@@ -1,0 +1,94 @@
+
+# MD SETUP
+timestep                1.
+numsteps                1
+
+# FLEXIBLE CELL
+useflexiblecell         no
+
+# INPUT
+structure               mod16_water.psf
+parameters              par_all36_cgenff.prm
+parameters              par_all36_prot.prm
+parameters              mod16_dual.str
+parameters              toppar_water_ions.str
+paraTypeCharmm          on
+
+coordinates             mod16_water.pdb
+
+# PME
+PME                     yes
+PMETolerance            10e-6
+# PMEGridSpacing          1.0
+PMEGridSizeX            60
+PMEGridSizeY            60
+PMEGridSizeZ            80
+
+# WRAP WATER FOR OUTPUT
+wrapAll                 on
+
+# CONSTANT-T
+langevin                on
+#langevinTemp            310.0
+langevinDamping         5.0
+langevinHydrogen        off
+
+# CONSTANT-P
+LangevinPiston          on
+LangevinPistonTarget    1.01325
+LangevinPistonPeriod    200
+LangevinPistonDecay     100
+#LangevinPistonTemp      310
+useGroupPressure        yes
+
+# SPACE PARTITIONING
+stepspercycle           20
+margin                  1.0
+
+# CUT-OFFS
+switching               on
+switchdist              8.0
+cutoff                  12.0
+pairlistdist            13.5
+
+# RESPA 
+fullElectFrequency      4
+nonbondedFreq           2
+
+# 1-4 NON-BONDED
+exclude                 scaled1-4
+1-4scaling              1.0
+
+# COM
+commotion               no
+
+# SHAKE
+rigidbonds              all 
+rigidtolerance          0.000001
+rigiditerations         100
+
+# FEP PARAMETERS
+# source                  fep.tcl
+
+alch                    on 
+alchType                FEP
+alchFile                mod16_water.pdb
+alchCol                 B
+#alchOutFile             forward-noshift.fepout
+#alchOutFreq             10
+
+alchVdwLambdaEnd        1.0
+alchElecLambdaStart     0.5
+alchVdWShiftCoeff       5.0
+alchDecouple            off
+
+#alchEquilSteps          2000 
+#set numSteps            4000
+
+#runFEP 0.0 1.0 0.0625 $numSteps
+
+# Solute scaling
+soluteScaling  on
+soluteScalingAll on
+soluteScalingFile spt.pdb
+soluteScalingCol B

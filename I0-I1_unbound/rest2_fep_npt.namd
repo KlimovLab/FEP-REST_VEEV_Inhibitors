@@ -1,0 +1,309 @@
+
+# Make sure all replicas are at this step
+replicaBarrier
+
+# Get the number of replicas from MPI threads and compare to set variable
+set nr [numReplicas]
+if { $num_replicas != $nr } {
+    error "restart with wrong number of replicas"
+}
+
+# Get the identity of the current replica from the MPI rank
+set r [myReplica]
+set replica_id $r
+
+# Set replica information from the restart file if it exists
+if {[info exists restart_root]} { #restart
+  set restart_root [format $restart_root $replica_id]
+  source $restart_root.$replica_id.tcl
+
+# Otherwise, generate replica information
+} else {
+  # Initialize job
+  set i_job 0 
+  set i_run 0
+  set i_step 0
+  if {[info exists first_timestep]} {
+    set i_step $first_timestep
+  }
+
+  # Get details for current replica
+  set replica(index) $r
+  set replica(loc.a) $r
+  set replica(index.a) $r
+  set replica(loc.b) $r
+  set replica(index.b) $r
+  set replica(exchanges_attempted) 0
+  set replica(exchanges_accepted) 0
+
+  # Get partner of current replica
+  if { $r % 2 == 0 && $r+1 < $nr } {
+    set replica(loc.a) [expr $r+1]
+    set replica(index.a) [expr $r+1]
+  }
+  if { $r % 2 == 1 && $r > 0 } {
+    set replica(loc.a) [expr $r-1]
+    set replica(index.a) [expr $r-1]
+  }
+  if { $r % 2 == 1 && $r+1 < $nr } {
+    set replica(loc.b) [expr $r+1]
+    set replica(index.b) [expr $r+1]
+  }
+  if { $r % 2 == 0 && $r > 0 } {
+    set replica(loc.b) [expr $r-1]
+    set replica(index.b) [expr $r-1]
+  }
+}
+
+set job_output_root "$output_root.job$i_job"
+firsttimestep $i_step
+
+# Replica temperature
+# T0..T0..T0..T0..T0
+proc replica_temp { i } {
+  global min_temp
+  return $min_temp
+}
+
+# REST2 scaling factor
+# T0/T0..T0/T1..T0/T2..T0/T1..T0/T0
+proc replica_beta { i } {
+  global num_replicas min_temp max_temp
+  set nrdiv2 [expr round($num_replicas / 2.)]
+  set j $i
+  if {$i >= $nrdiv2} {
+    set j [expr $num_replicas - $i - 1.]
+  }
+  set temp [expr ($min_temp * \
+    exp( log(1.0*$max_temp/$min_temp)*(1.0*$j/($nrdiv2-1)) ) )]
+  return [expr $min_temp / $temp]
+}
+
+# FEP window start
+# L0..L1..L2..L3..L4
+proc replica_lambda1 { i } {
+  global num_replicas
+  return [expr ($i * 1.) / ($num_replicas - 1.)]
+}
+
+# FEP window end
+# L1..L2..L3..L4..1
+proc replica_lambda2 { i } {
+  global num_replicas
+  # return [expr (($i + 1) * 1.) / ($num_replicas - 1.)]
+  return 1.
+}
+
+# Define replica temperatures, REST2 scaling, and FEP windows
+set replica(temperature) [replica_temp $replica(index)]
+set replica(temperature.a) [replica_temp $replica(index.a)]
+set replica(temperature.b) [replica_temp $replica(index.b)]
+
+set replica(beta) [replica_beta $replica(index)]
+set replica(beta.a) [replica_beta $replica(index.a)]
+set replica(beta.b) [replica_beta $replica(index.b)]
+
+set replica(lambda1) [replica_lambda1 $replica(index)]
+set replica(lambda1.a) [replica_lambda1 $replica(index.a)]
+set replica(lambda1.b) [replica_lambda1 $replica(index.b)]
+
+set replica(lambda2) [replica_lambda2 $replica(index)]
+set replica(lambda2.a) [replica_lambda2 $replica(index.a)]
+set replica(lambda2.b) [replica_lambda2 $replica(index.b)]
+
+proc save_callback {labels values} {
+  global saved_labels saved_values
+  set saved_labels $labels
+  set saved_values $values
+}
+callback save_callback
+
+proc save_array {} {
+  global saved_labels saved_values saved_array
+  foreach label $saved_labels value $saved_values {
+    set saved_array($label) $value
+  }
+}
+
+# Set temperature, REST2 scaling, and FEP windows for current replica
+set NEWTEMP $replica(temperature)
+set NEWBETA $replica(beta)
+set NEWLAMBDA1 $replica(lambda1)
+set NEWLAMBDA2 $replica(lambda2)
+seed [expr int(0*srand(int(100000*rand()) + 100*$replica_id) + 100000*rand() + 1)]
+langevinTemp $NEWTEMP
+langevinPistonTemp $NEWTEMP
+#soluteScalingFactor $NEWBETA
+#alchLambda $NEWLAMBDA1
+#alchLambda2 $NEWLAMBDA2
+outputname [format $job_output_root.$replica_id $replica_id]
+alchOutFile [format "$job_output_root.$replica_id.fepout" $replica_id]
+alchOutFreq [expr $steps_per_run * $runs_per_frame]
+
+# Which structure to use?
+if {$i_run} { #restart
+  bincoordinates $restart_root.$replica_id.coor
+  binvelocities $restart_root.$replica_id.vel
+  extendedSystem $restart_root.$replica_id.xsc
+} else {
+  bincoordinates input/initial${replica_id}.coor
+  binvelocities input/initial${replica_id}.vel
+  extendedSystem input/initial${replica_id}.xsc
+  # temperature $NEWTEMP
+}
+
+outputEnergies [expr $steps_per_run * $runs_per_frame]
+dcdFreq [expr $steps_per_run * $runs_per_frame]
+
+source $namd_config_file
+
+set history_file [open [format "$job_output_root.$replica_id.history" $replica_id] "w"]
+fconfigure $history_file -buffering line
+
+# Run replica iterations
+while {$i_run < $num_runs} {
+  # Run current iteration i_run
+  soluteScalingFactor $NEWBETA
+  alchLambda $NEWLAMBDA1
+  alchLambda2 $NEWLAMBDA2
+  run $steps_per_run
+  save_array
+  incr i_step $steps_per_run
+  set TEMP $saved_array(TEMP)
+  set POTENTIAL [expr $saved_array(TOTAL) - $saved_array(KINETIC)]
+  set VOLUME $saved_array(VOLUME)
+
+  # Get exchange partner
+  if { $i_run % 2 == 0 } {
+    set swap a; set other b
+  } else {
+    set swap b; set other a
+  }
+
+  # Run current iteration result under partner Hamiltonian
+  soluteScalingFactor $replica(beta.$swap)
+  alchLambda $replica(lambda1.$swap)
+  alchLambda2 $replica(lambda2.$swap)
+  run 0
+  save_array
+  set POTENTIALSWAP [expr $saved_array(TOTAL) - $saved_array(KINETIC)]
+
+  puts $history_file "$i_step $replica(index) $NEWTEMP $NEWBETA $NEWLAMBDA1 $POTENTIAL $POTENTIALSWAP $VOLUME"
+
+  # Exchange attempt
+  set doswap 0
+  if { $replica(index) < $replica(index.$swap) } {
+    set temp $replica(temperature)
+    set temp2 $replica(temperature.$swap)
+    set BOLTZMAN 0.001987191
+    set PRESSURE 0.00001458397
+    set dbeta [expr (1. / $temp) / $BOLTZMAN] 
+    set dbeta2 [expr (1. / $temp2) / $BOLTZMAN]
+    set pot $POTENTIAL
+    set potswap $POTENTIALSWAP
+    set pot2 [replicaRecv $replica(loc.$swap)]
+    set potswap2 [replicaRecv $replica(loc.$swap)]
+    set vol $VOLUME
+    set vol2 [replicaRecv $replica(loc.$swap)]
+    set enth [expr $pot + $PRESSURE * $vol]
+    set enthswap [expr $potswap + $PRESSURE * $vol]
+    set enth2 [expr $pot2 + $PRESSURE * $vol2]
+    set enthswap2 [expr $potswap2 + $PRESSURE * $vol2]
+    set delta [expr ($enthswap2 - $enth) * $dbeta + ($enthswap - $enth2) * $dbeta2]
+    set doswap [expr $delta < 0. || exp(-1. * $delta) > rand()]
+    replicaSend $doswap $replica(loc.$swap)
+    if { $doswap } {
+      set rid $replica(index)
+      set rid2 $replica(index.$swap)
+      puts stderr "EXCHANGE_ACCEPT $rid $rid2 RUN $i_run"
+      incr replica(exchanges_accepted)
+    }
+    incr replica(exchanges_attempted)
+  }
+  if { $replica(index) > $replica(index.$swap) } {
+    replicaSend $POTENTIAL $replica(loc.$swap)
+    replicaSend $POTENTIALSWAP $replica(loc.$swap)
+    replicaSend $VOLUME $replica(loc.$swap)
+    set doswap [replicaRecv $replica(loc.$swap)]
+  }
+
+  # Perform swap if exchange was accepted
+  set newloc $r
+  if { $doswap } {
+    set newloc $replica(loc.$swap)
+    set replica(loc.$swap) $r
+  }
+  set replica(loc.$other) [replicaSendrecv $newloc $replica(loc.$other) $replica(loc.$other)]
+  set oldidx $replica(index)
+  if { $doswap } {
+    set OLDTEMP $replica(temperature)
+    array set replica [replicaSendrecv [array get replica] $newloc $newloc]
+    set NEWTEMP $replica(temperature)
+    set NEWBETA $replica(beta)
+    set NEWLAMBDA1 $replica(lambda1)
+    set NEWLAMBDA2 $replica(lambda2)
+    rescalevels [expr sqrt(1.0*$NEWTEMP/$OLDTEMP)]
+    langevinTemp $NEWTEMP
+    langevinPistonTemp $NEWTEMP
+    #soluteScalingFactor $NEWBETA
+    #alchLambda $NEWLAMBDA1
+    #alchLambda2 $NEWLAMBDA2
+  }
+
+  # puts stderr "iteration $i_run replica $replica(index) now on rank $r"
+  # replicaBarrier
+
+  incr i_run
+
+  # Create restart 
+  if { $i_run % ($runs_per_frame * $frames_per_restart) == 0 ||
+        $i_run == $num_runs } {  # restart
+    set restart_root "$job_output_root.restart$i_run"
+    output [format $restart_root.$replica_id $replica_id]
+    set rfile [open [format "$restart_root.$replica_id.tcl" $replica_id] "w"]
+    puts $rfile [list array set replica [array get replica]]
+    close $rfile
+    replicaBarrier
+    if { $replica_id == 0 } {
+      set rfile [open [format "$restart_root.tcl" ""] "w"]
+      puts $rfile [list set i_job [expr $i_job + 1]]
+      puts $rfile [list set i_run $i_run]
+      puts $rfile [list set i_step $i_step]
+      puts $rfile [list set restart_root $restart_root]
+      close $rfile
+      if [info exists old_restart_root] {
+        set oldroot [format $old_restart_root ""]
+        file delete $oldroot.tcl
+      }
+    }
+    replicaBarrier
+    if [info exists old_restart_root] {
+      set oldroot [format $old_restart_root $replica_id]
+      file delete $oldroot.$replica_id.tcl
+      file delete $oldroot.$replica_id.coor
+      file delete $oldroot.$replica_id.vel
+      file delete $oldroot.$replica_id.xsc
+    }
+    set old_restart_root $restart_root
+  }
+}
+
+# Compute exchange rate
+set attempts $replica(exchanges_attempted)
+if $attempts {
+  set i $replica(index)
+  if { $replica(index.a) > $i } {
+    set swap a
+  } else {
+    set swap b
+  }
+  set temp $replica(temperature)
+  set temp2 $replica(temperature.$swap)
+  set accepts $replica(exchanges_accepted)
+  set ratio [expr 1.0*$accepts/$attempts]
+  puts stderr "EXCHANGE_RATIO $temp $temp2 $accepts $attempts $ratio"
+}
+
+# Make sure all replicas are at this step
+replicaBarrier
+
