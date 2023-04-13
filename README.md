@@ -1,8 +1,8 @@
 
-These directories contain the initial files needed to run FEP/REST simulations (using NAMD) of Venezeulen equine encephalitis virus inhibitors bound to importin-$\alpha$ for the purposes of free energy calculations.
-* `I0-I1_bound` FEP/REST simulations can be used to compute the bound free energy of inhibitor tranformation I0->I1 with importin-$\alpha$.
+These directories contain the initial files needed to run FEP/REST simulations (using NAMD) of Venezeulen equine encephalitis virus inhibitors bound to importin-α for the purposes of free energy calculations.
+* `I0-I1_bound` FEP/REST simulations can be used to compute the bound free energy of inhibitor tranformation I0->I1 with importin-α.
 * `I0-I1_unbound` FEP/REST simulations can be used to compute the unbound free energy of inhibitor transformation I0->I1 in water.
-* `I0-I2_bound` FEP/REST simulations can be used to compute the bound free energy of inhibitor tranformation I0->I2 with importin-$\alpha$.
+* `I0-I2_bound` FEP/REST simulations can be used to compute the bound free energy of inhibitor tranformation I0->I2 with importin-α.
 * `I0-I2_unbound` FEP/REST simulations can be used to compute the unbound free energy of inhibitor transformation I0->I2 in water.
 
 More information about the ligands I0, I1, and I2 can be found in https://doi.org/10.1021/acs.jpcb.3c00429
